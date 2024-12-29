@@ -328,3 +328,56 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+@torch.no_grad()
+def BN_init(model, get_batch, n_batches):
+    for _ in range(n_batches):
+        idx, _ = get_batch('train')
+        idx.to('cuda:0')
+        print(idx.device)
+
+        device = idx.device
+        b, t = idx.size()
+        assert t <= model.config.block_size, f"Cannot forward sequence of length {t}, block size is only {model.config.block_size}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+
+        # forward the GPT model itself
+        tok_emb = model.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = model.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
+        x = model.transformer.drop(tok_emb + pos_emb)
+        for block in model.transformer.h: # manually apply BN at the MLP layers
+            x = x + block.attn(block.ln_1(x))
+            mlp_in = block.ln_2(x)
+            to_norm = block.mlp.c_fc(mlp_in)
+            print(f"shape before: {to_norm.shape}f")
+
+            # Calculate mean and variance
+            mean = to_norm.mean(dim=0, keepdim=True)
+            var = to_norm.var(dim=0, unbiased=False, keepdim=True)
+            print("before mean:", to_norm.mean().item(), "var:", to_norm.var().item())
+
+            s = 1.0 / torch.sqrt(var + 1e-5)
+            c = -mean * s
+            c = c.mean(dim=1, keepdim=True).squeeze(0).squeeze(0)
+            #print(c.shape)
+            s = s.mean(dim=1, keepdim=True).squeeze(0).squeeze(0)
+
+            block.mlp.c_fc.weight.mul_(s.unsqueeze(1))
+
+            if block.mlp.c_fc.bias is not None:
+                block.mlp.c_fc.bias.mul_(s.squeeze(0))
+                block.mlp.c_fc.bias.add_(c.squeeze(0))
+
+            # run on the normalized inputs
+            mlp_in = block.mlp.c_fc(mlp_in)
+            print("shape after", mlp_in.shape)
+
+            print("after mean:", mlp_in.mean().item(), "var:", mlp_in.var().item())
+
+            mlp_in = block.mlp.gelu(mlp_in)
+            mlp_in = block.mlp.c_proj(mlp_in)
+            mlp_in = block.mlp.dropout(mlp_in)
+            x = x + mlp_in
+            
+        x = model.transformer.ln_f(x)      
+

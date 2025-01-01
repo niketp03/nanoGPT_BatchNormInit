@@ -15,6 +15,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from einops import rearrange
+
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
@@ -331,6 +333,24 @@ class GPT(nn.Module):
 
 @torch.no_grad()
 def BN_init(model, get_batch, n_batches):
+
+    # updates nn.linear layer inplace to have mean 0 and variance 1 on the input batch
+    def update_linear_layer(input, layer):
+        to_norm = layer(input)
+            
+        to_norm = rearrange(to_norm, "b s n -> (b s) n")
+
+        # Calculate mean and variance
+        mean = to_norm.mean(dim=0)
+        std = to_norm.var(dim=0, unbiased=False).sqrt()
+
+        layer.weight.div_(std.unsqueeze(1))
+
+        if layer.bias is not None:
+            layer.bias.add_(-mean)
+            layer.bias.div_(std)
+
+
     for _ in range(n_batches):
         idx, _ = get_batch('train')
         idx.to('cuda:0')
@@ -348,34 +368,24 @@ def BN_init(model, get_batch, n_batches):
         for block in model.transformer.h: # manually apply BN at the MLP layers
             x = x + block.attn(block.ln_1(x))
             mlp_in = block.ln_2(x)
-            to_norm = block.mlp.c_fc(mlp_in)
-            print(f"shape before: {to_norm.shape}f")
-
-            # Calculate mean and variance
-            mean = to_norm.mean(dim=0, keepdim=True)
-            var = to_norm.var(dim=0, unbiased=False, keepdim=True)
-            print("before mean:", to_norm.mean().item(), "var:", to_norm.var().item())
-
-            s = 1.0 / torch.sqrt(var + 1e-5)
-            c = -mean * s
-            c = c.mean(dim=1, keepdim=True).squeeze(0).squeeze(0)
-            #print(c.shape)
-            s = s.mean(dim=1, keepdim=True).squeeze(0).squeeze(0)
-
-            block.mlp.c_fc.weight.mul_(s.unsqueeze(1))
-
-            if block.mlp.c_fc.bias is not None:
-                block.mlp.c_fc.bias.mul_(s.squeeze(0))
-                block.mlp.c_fc.bias.add_(c.squeeze(0))
+            
+            #scale and shift params in linear layer
+            update_linear_layer(mlp_in, block.mlp.c_fc)
 
             # run on the normalized inputs
             mlp_in = block.mlp.c_fc(mlp_in)
-            print("shape after", mlp_in.shape)
 
-            print("after mean:", mlp_in.mean().item(), "var:", mlp_in.var().item())
+            print("hidden layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
 
             mlp_in = block.mlp.gelu(mlp_in)
+
+            #scale and shift params in linear layer
+            update_linear_layer(mlp_in, block.mlp.c_proj)
+
             mlp_in = block.mlp.c_proj(mlp_in)
+            print("proj layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
+
+
             mlp_in = block.mlp.dropout(mlp_in)
             x = x + mlp_in
             

@@ -10,8 +10,8 @@ log_interval = 10 # don't print too too often
 always_save_checkpoint = False
 
 wandb_log = True # override via command line if you like
-wandb_project = 'shakespeare-char'
-wandb_run_name = 'mini-gpt'
+wandb_project = 'shakespeare-char-bn-init'
+wandb_run_name = 'mini-gpt-bn-init'
 
 dataset = 'shakespeare_char'
 gradient_accumulation_steps = 1
@@ -24,7 +24,7 @@ n_head = 6
 n_embd = 384
 dropout = 0.2
 
-learning_rate = 3e-3 # with baby networks can afford to go a bit higher
+learning_rate = 1e-3 # with baby networks can afford to go a bit higher
 max_iters = 5000
 lr_decay_iters = 5000 # make equal to max_iters usually
 min_lr = 1e-4 # learning_rate / 10 usually
@@ -35,3 +35,6 @@ warmup_iters = 100 # not super necessary potentially
 # on macbook also add
 # device = 'cpu'  # run on cpu only
 # compile = False # do not torch compile the model
+
+bn_init = True
+bn_init_n_batches = 100

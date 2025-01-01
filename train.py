@@ -73,8 +73,9 @@ device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 compile = True # use PyTorch 2.0 to compile the model to be faster
 # use bn_init to initialize the model with BatchNorm layers
-bn_init = True
+bn_init = False
 bn_init_n_batches = 10 # number of batches to use for BatchNorm initialization
+
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
@@ -217,7 +218,7 @@ if bn_init and init_from == 'scratch':
     print("Initializing model with BatchNorm weights")
     BN_init(model, get_batch, bn_init_n_batches)
     print('BatchNorm weights initialized')
-    
+
 
 # wrap model into DDP container
 if ddp:

@@ -16,6 +16,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from einops import rearrange
+from tqdm import trange
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -351,7 +352,7 @@ def BN_init(model, get_batch, n_batches):
             layer.bias.div_(std)
 
 
-    for _ in range(n_batches):
+    for _ in trange(n_batches):
         idx, _ = get_batch('train')
         idx.to('cuda:0')
         print(idx.device)
@@ -375,7 +376,7 @@ def BN_init(model, get_batch, n_batches):
             # run on the normalized inputs
             mlp_in = block.mlp.c_fc(mlp_in)
 
-            print("hidden layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
+            #print("hidden layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
 
             mlp_in = block.mlp.gelu(mlp_in)
 
@@ -383,7 +384,7 @@ def BN_init(model, get_batch, n_batches):
             update_linear_layer(mlp_in, block.mlp.c_proj)
 
             mlp_in = block.mlp.c_proj(mlp_in)
-            print("proj layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
+            #print("proj layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
 
 
             mlp_in = block.mlp.dropout(mlp_in)

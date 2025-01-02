@@ -355,7 +355,6 @@ def BN_init(model, get_batch, n_batches):
     for _ in trange(n_batches):
         idx, _ = get_batch('train')
         idx.to('cuda:0')
-        print(idx.device)
 
         device = idx.device
         b, t = idx.size()

@@ -78,13 +78,33 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y
 
+
+class BNLinear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__(in_features, out_features, bias)
+        self.register_buffer('scale', torch.ones(out_features))
+        self.register_buffer('shift', torch.zeros(out_features))
+
+
+    def forward(self, input):
+        return (super().forward(input) + self.shift) * self.scale
+
+    def bn_init(self, input):
+        to_norm = super().forward(input)
+        to_norm = rearrange(to_norm, "b s n -> (b s) n")
+        mean = to_norm.mean(dim=0)
+        std = to_norm.var(dim=0, unbiased=False).sqrt()
+
+        self.shift = -mean
+        self.scale = (1 / std)
+
 class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_fc    = BNLinear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = BNLinear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -335,23 +355,6 @@ class GPT(nn.Module):
 @torch.no_grad()
 def BN_init(model, get_batch, n_batches):
 
-    # updates nn.linear layer inplace to have mean 0 and variance 1 on the input batch
-    def update_linear_layer(input, layer):
-        to_norm = layer(input)
-            
-        to_norm = rearrange(to_norm, "b s n -> (b s) n")
-
-        # Calculate mean and variance
-        mean = to_norm.mean(dim=0)
-        std = to_norm.var(dim=0, unbiased=False).sqrt()
-
-        layer.weight.div_(std.unsqueeze(1))
-
-        if layer.bias is not None:
-            layer.bias.add_(-mean)
-            layer.bias.div_(std)
-
-
     for _ in trange(n_batches):
         idx, _ = get_batch('train')
         idx.to('cuda:0')
@@ -370,21 +373,21 @@ def BN_init(model, get_batch, n_batches):
             mlp_in = block.ln_2(x)
             
             #scale and shift params in linear layer
-            update_linear_layer(mlp_in, block.mlp.c_fc)
+            block.mlp.c_fc.bn_init(mlp_in)
 
-            # run on the normalized inputs
+            # run on the normalized 
             mlp_in = block.mlp.c_fc(mlp_in)
 
-            #print("hidden layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
+            print("hidden layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
 
             mlp_in = block.mlp.gelu(mlp_in)
 
             #scale and shift params in linear layer
-            update_linear_layer(mlp_in, block.mlp.c_proj)
+            block.mlp.c_proj.bn_init(mlp_in)
 
+            # run on the normalized
             mlp_in = block.mlp.c_proj(mlp_in)
-            #print("proj layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
-
+            print("proj layer normed mean:", rearrange(mlp_in, "b s n -> (b s) n").mean().item(), "var:", rearrange(mlp_in, "b s n -> (b s) n").var().item())
 
             mlp_in = block.mlp.dropout(mlp_in)
             x = x + mlp_in

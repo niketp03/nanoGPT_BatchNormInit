@@ -82,12 +82,9 @@ class CausalSelfAttention(nn.Module):
 class BNLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True):
         super().__init__(in_features, out_features, bias)
-        self.register_buffer('scale', torch.ones(out_features))
-        self.register_buffer('shift', torch.zeros(out_features))
-
 
     def forward(self, input):
-        return (super().forward(input) + self.shift) * self.scale
+        return super().forward(input)
 
     def bn_init(self, input):
         to_norm = super().forward(input)
@@ -95,8 +92,12 @@ class BNLinear(nn.Linear):
         mean = to_norm.mean(dim=0)
         std = to_norm.var(dim=0, unbiased=False).sqrt()
 
-        self.shift = -mean
-        self.scale = (1 / std)
+        self.weight.div_(std.unsqueeze(1))
+        
+        if self.bias is not None:
+            self.bias.add_(-mean)
+            self.bias.div_(std)
+
 
 class MLP(nn.Module):
 
